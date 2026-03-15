@@ -2910,6 +2910,50 @@ async def process_youtube_publish(video: dict, channel: dict, access_token: str,
             )
 
 async def create_video_file(video: dict) -> Optional[str]:
+
+async def publish_video_to_youtube(video_id: str, channel_id: str) -> bool:
+    """Auto-publish a video to YouTube (used by scheduler)"""
+    try:
+        video = await db.videos.find_one({"id": video_id})
+        if not video or video.get("status") != "completed":
+            logger.error(f"Video {video_id} not found or not completed")
+            return False
+        
+        channel = await db.youtube_channels.find_one({"id": channel_id})
+        if not channel or not channel.get("access_token"):
+            logger.error(f"Channel {channel_id} not found or no token")
+            return False
+        
+        # Refresh token if expired
+        if datetime.utcnow() >= channel.get("token_expiry", datetime.utcnow()):
+            access_token = await refresh_youtube_token(channel_id)
+        else:
+            access_token = channel["access_token"]
+        
+        if not access_token:
+            logger.error(f"Could not get access token for channel {channel_id}")
+            return False
+        
+        # Generate title and description
+        title = video.get("title", "Kids Fun Video")
+        description = video.get("description", "Fun educational video for kids!")
+        tags = video.get("tags", ["kids", "baby", "education", "fun"])
+        is_short = video.get("video_type") == "short"
+        
+        if is_short and "#Shorts" not in title:
+            title = f"{title} #Shorts"
+        
+        # Publish
+        await process_youtube_publish(
+            video, channel, access_token,
+            title, description, tags, "public", None
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Error in publish_video_to_youtube: {e}")
+        return False
+
+
     """Create an MP4 video file from scenes (images + audio)"""
     try:
         from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
